@@ -1,4 +1,4 @@
-FROM python:3.13-slim AS build
+FROM python:3.13-alpine AS build
 
 WORKDIR /app
 RUN python -m venv /app/venv
@@ -6,7 +6,7 @@ ENV PATH="/app/venv/bin:$PATH"
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-FROM python:3.13-slim
+FROM python:3.13-alpine
 WORKDIR /app/venv
 COPY --from=build /app/venv /app/venv
 COPY leafspy2mqtt.py /app/leafspy2mqtt.py
