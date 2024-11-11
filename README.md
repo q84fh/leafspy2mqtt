@@ -52,6 +52,8 @@ Then:
  8. Check if your `leafspy2mqtt` is reachable over HTTP or HTTPS
  9. Enter `URL` (without http:// or https:// prefix)
 
+https://github.com/user-attachments/assets/38f6c019-b40b-4f0c-8840-9eabd31f0c31
+
 You can configure your LeafSpy to send data to up to 4 different servers (`A`, `B`, `C`, `D`). 
 
 ## Data format
