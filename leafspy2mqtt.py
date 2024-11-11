@@ -20,16 +20,22 @@ USERNAME = os.getenv("USERNAME")
 # python -c 'import hashlib; print(hashlib.sha3_512(b"Nobody inspects the spammish repetition").hexdigest())'
 PASSWORD_HASH = os.getenv("PASSWORD_HASH")
 
+tornado.log.enable_pretty_logging()
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
 
         try:
-            self.get_argument("user")
-            self.get_argument("pass")
+            user = self.get_argument("user")
+            password = self.get_argument("pass")
         except tornado.web.MissingArgumentError:
             self.set_status(401, "Unauthorized")
             self.write("HTTP/401 Unauthorized")
+            return
+
+        if user != USERNAME or hashlib.sha3_512(password.encode()).hexdigest() != PASSWORD_HASH:
+            self.set_status(403, "Forbidden")
+            self.write("HTTP/403 Forbidden")
             return
 
         payload = {}
