@@ -1,6 +1,5 @@
 # leafspy2mqtt
 
-[![Built with Devbox](https://www.jetify.com/img/devbox/shield_galaxy.svg)](https://www.jetify.com/devbox/docs/contributor-quickstart/)
 [![Docker Pulls](https://badgen.net/docker/pulls/q84fh/leafspy2mqtt?icon=docker&label=pulls)](https://hub.docker.com/r/q84fh/leafspy2mqtt/)
 [![Docker Stars](https://badgen.net/docker/stars/q84fh/leafspy2mqtt?icon=docker&label=stars)](https://hub.docker.com/r/q84fh/leafspy2mqtt/)
 [![Docker Image Size](https://badgen.net/docker/size/q84fh/leafspy2mqtt?icon=docker&label=image%20size)](https://hub.docker.com/r/q84fh/leafspy2mqtt/)
@@ -8,6 +7,7 @@
 [![Github forks](https://badgen.net/github/forks/q84fh/leafspy2mqtt?icon=github&label=forks)](https://github.com/q84fh/leafspy2mqtt)
 [![Github issues](https://img.shields.io/github/issues/q84fh/leafspy2mqtt)](https://github.com/q84fh/leafspy2mqtt/issues)
 [![Github last-commit](https://img.shields.io/github/last-commit/q84fh/leafspy2mqtt)](https://github.com/q84fh/leafspy2mqtt)
+[![Built with Devbox](https://www.jetify.com/img/devbox/shield_galaxy.svg)](https://www.jetify.com/devbox/docs/contributor-quickstart/)
 
 This is simple LeafSpy server that bridges LeafSpy to MQTT broker. 
 
@@ -29,7 +29,7 @@ Configuration is done via environment variables:
 version: '3'
 services:
   leafspy2mqtt:
-    image: leafspy2mqtt:latest
+    image: q84fh/leafspy2mqtt:latest
     ports:
       -  8888:8888
     restart: unless-stopped
