@@ -9,7 +9,7 @@
 [![Github last-commit](https://img.shields.io/github/last-commit/q84fh/leafspy2mqtt)](https://github.com/q84fh/leafspy2mqtt)
 [![Built with Devbox](https://www.jetify.com/img/devbox/shield_galaxy.svg)](https://www.jetify.com/devbox/docs/contributor-quickstart/)
 
-This is simple LeafSpy server that bridges LeafSpy to MQTT broker. 
+This is simple server that bridges [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) to MQTT broker. 
 
 ## Environment variables
 Configuration is done via environment variables:
@@ -18,8 +18,8 @@ Configuration is done via environment variables:
  - `MQTT_PASSWORD` - password to your MQTT server
  - `MQTT_TOPIC` - topic to which messages should be sent
  - `MQTT_HOST` - address of your MQTT server
- - `PASSWORD_HASH` - hashed password entered in LeafSpy, can be generated with: `python -c 'import hashlib; print(hashlib.sha3_512(b"Nobody inspects the spammish repetition").hexdigest())'`
- - `USERNAME=q84fh` - username entered in LeafSpy
+ - `PASSWORD_HASH` - hashed password entered in [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US), can be generated with: `python -c 'import hashlib; print(hashlib.sha3_512(b"Nobody inspects the spammish repetition").hexdigest())'`
+ - `USERNAME=q84fh` - username entered in [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US)
 
  ## Example docker-compose
 
@@ -28,7 +28,7 @@ Configuration is done via environment variables:
  ```yaml
 version: '3'
 services:
-  leafspy2mqtt:
+  2mqtt:
     image: q84fh/leafspy2mqtt:latest
     ports:
       -  8888:8888
@@ -48,7 +48,7 @@ services:
  ```
 
 ## LeafSpy configuration
-You need to expose port 8888 so LeafSpy would be able to reach it. You can do it via VPN to your mobile, or by just exposing it to the public Internet.
+You need to expose port 8888 so [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) would be able to reach it. You can do it via VPN to your mobile, or by just exposing it to the public Internet.
 
 Then:
  1. Go to the settings using `≡` menu
@@ -63,17 +63,17 @@ Then:
 
 https://github.com/user-attachments/assets/38f6c019-b40b-4f0c-8840-9eabd31f0c31
 
-You can configure your LeafSpy to send data to up to 4 different servers (`A`, `B`, `C`, `D`). 
+You can configure your [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) to send data to up to 4 different servers (`A`, `B`, `C`, `D`). 
 
 ## Data format
-LeafSpy sends its data with HTTP `GET` request with data placed in URL query string.
+[LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) sends its data with HTTP `GET` request with data placed in URL query string.
 
 It goes like this:
 ```
 GET /?user=q84fh&pass=Nobodyinspectsthespammishrepetition&DevBat=100&Gids=219&Lat=-11.12421&Long=-71.75095&Elv=35&Seq=143&Trip=86&Odo=37774&SOC=46.2757&AHr=107.3014&BatTemp=8.7&Amb=7.0&Wpr=0&PlugState=2&ChrgMode=2&ChrgPwr=1300&VIN=SJNFAAZE1U0134294&PwrSw=1&Tunits=C&RPM=0&SOH=92.95&Hx=102.51&Speed=0.0&BatVolts=352.56&BatAmps=-1.006
 ```
 
-LeafSpy expects response HTTP/200 with payload:
+[LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) expects response HTTP/200 with payload:
 ```
 "status":"0"
 ```
@@ -88,10 +88,10 @@ LeafSpy expects response HTTP/200 with payload:
 | Lat 	    | float | °       | -11.12421                           | Lattitute from GPS                                           |
 | Long 	    | float | °       | -71.75095                           | Longitute from GPS                                           |
 | Elv 	    | int   | m       | 35                                  | Elevation from GPS                                           |
-| Seq 	    | int   | -       | 117                                 | LeafSpy request number (resets on restart)                   |
+| Seq 	    | int   | -       | 117                                 | [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) request number (resets on restart)                   |
 | Trip 	    | int   | km      | 86                                  | Current trip distance (resets on restart)                    |
 | Odo 	    | int   | km      | 37774                               | Total car milage                                             |
-| SOC 	    | float | %       | 46.2157                             | SOC calculated by LeafSpy                                    |
+| SOC 	    | float | %       | 46.2157                             | SOC calculated by [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US)                                    |
 | AHr 	    | float | AH      | 107.3014                            | Maximum capacity of battery                                  |
 | BatTemp 	| float | °Tunits |                                     | Avarage battery temperature (check Tunits for used unit)     |
 | Amb 	    | float | °Tunits | 7.5                                 | Ambient temperature (check Tunits for used unit)             |
