@@ -70,7 +70,7 @@ You can configure your [LeafSpy](https://play.google.com/store/apps/details?id=c
 
 It goes like this:
 ```
-GET /?user=q84fh&pass=Nobodyinspectsthespammishrepetition&DevBat=100&Gids=219&Lat=-11.12421&Long=-71.75095&Elv=35&Seq=143&Trip=86&Odo=37774&SOC=46.2757&AHr=107.3014&BatTemp=8.7&Amb=7.0&Wpr=0&PlugState=2&ChrgMode=2&ChrgPwr=1300&VIN=SJNFAAZE1U0134294&PwrSw=1&Tunits=C&RPM=0&SOH=92.95&Hx=102.51&Speed=0.0&BatVolts=352.56&BatAmps=-1.006
+GET /?user=q84fh&pass=Nobodyinspectsthespammishrepetition&DevBat=100&Gids=219&Lat=-11.12421&Long=-71.75095&Elv=35&Seq=143&Trip=86&Odo=37774&SOC=46.2757&AHr=107.3014&BatTemp=8.7&Amb=7.0&Wpr=0&PlugState=2&ChrgMode=2&ChrgPwr=1300&VIN=3VWSB81H8WM210368&PwrSw=1&Tunits=C&RPM=0&SOH=92.95&Hx=102.51&Speed=0.0&BatVolts=352.56&BatAmps=-1.006
 ```
 
 [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) expects response HTTP/200 with payload:
@@ -83,7 +83,7 @@ GET /?user=q84fh&pass=Nobodyinspectsthespammishrepetition&DevBat=100&Gids=219&La
 | --------- | ----- | --------| ------------------------------------| ------------------------------------------------------------ |
 | user 	    | str   | -       | q84fh                               | Username                                                     |
 | pass 	    | str   | -       | Nobodyinspectsthespammishrepetition | Password                                                     |
-| DevBat 	| int   | ?       | 100                                 | I don't know, PR welcome                                     |
+| DevBat 	| int   | %        | 100                                 | Phone battery level                                            |
 | Gids 	    | int   | ?       | 219                                 | RAW battery SOC reported by BMS                              |
 | Lat 	    | float | °       | -11.12421                           | Lattitute from GPS                                           |
 | Long 	    | float | °       | -71.75095                           | Longitute from GPS                                           |
@@ -95,13 +95,13 @@ GET /?user=q84fh&pass=Nobodyinspectsthespammishrepetition&DevBat=100&Gids=219&La
 | AHr 	    | float | AH      | 107.3014                            | Maximum capacity of battery                                  |
 | BatTemp 	| float | °Tunits |                                     | Avarage battery temperature (check Tunits for used unit)     |
 | Amb 	    | float | °Tunits | 7.5                                 | Ambient temperature (check Tunits for used unit)             |
-| Wpr 	    | int   | ?       | 0                                   | I don't know, PR welcome                                     |
+| Wpr 	    | int   | -       | 0                                   | Front wiper status                                      |
 | PlugState | int   | -       | 2                                   | I don't know, PR welcome                                     |
 | ChrgMode  | int   | -       | 2                                   | I don't know, PR welcome                                     |
 | ChrgPwr 	| int   | W       | 1300                                | Negotiated charging power                                    |
 | VIN 	    | str   | -       | 3VWSB81H8WM210368                   | VIN of the car                                               |
-| PwrSw 	| int   | -       | 1                                   | I don't know, PR welcome                                     |
-| Tunits 	| str   | -       | C                                   | Unit used to report temperatures                             |
+| PwrSw 	| int   | -       | 1                                   | Power switch state 0=off, 1=on                                     |
+| Tunits 	| str   | -       | C                                   | Unit used to report temperatures (C/F)                             |
 | RPM       | int   | RPM     | 0                                   | Number of revolution per minute of motor                     |
 | SOH 	    | float | %       | 92.95                               | State of health reported by BMS                              |
 | Hx        | float | %       | 102.51                              | Percent of nominal battery conductivity                      |
