@@ -52,7 +52,7 @@ class MainHandler(tornado.web.RequestHandler):
         
         publish.single(MQTT_TOPIC, json.dumps(payload), hostname=MQTT_HOST, auth={'username': MQTT_USERNAME, 'password': MQTT_PASSWORD})
 
-        self.write(json.dumps(payload))
+        self.write('"status":"0"')
 
 def make_app():
     return tornado.web.Application([
