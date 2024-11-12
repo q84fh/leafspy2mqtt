@@ -105,7 +105,7 @@ GET /?user=q84fh&pass=Nobodyinspectsthespammishrepetition&DevBat=100&Gids=219&La
 | RPM       | int   | RPM     | 0                                   | Number of revolution per minute of motor                     |
 | SOH 	    | float | %       | 92.95                               | State of health reported by BMS                              |
 | Hx        | float | %       | 102.51                              | Percent of nominal battery conductivity                      |
-| Speed 	| float | km/h    | 0.0                                 | Vehicle speed                                                |
+| Speed 	| float | m/s    | 0.0                                 | Vehicle speed                                                |
 | BatVolts 	| float | V       | 352.55                              | Voltage of battery                                           |
 | BatAmps 	| float | A       | -1.189                              | Current flowing into (negative) or out of battery (positive) |
 
@@ -212,10 +212,10 @@ mqtt:
       unit_of_measurement: A
       device_class: current
       value_template: "{{ value_json.BatAmps }}"
-      
-    - name: leafspy_BatteryEnergy
+
+    - name: leafspy_Speed
       state_topic: "leafspy"
-      unit_of_measurement: kWh
-      device_class: energy
-      value_template: "{{ (((value_json.BatVolts | float * value_json.AHr | float) / 100000) * value_json.SOC | float) | round(2) }}"
+      unit_of_measurement: km/h
+      device_class: speed
+      value_template: "{{ value_json.Speed | float * 3.6 | round(0) }}"
 ```
