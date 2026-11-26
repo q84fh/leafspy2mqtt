@@ -18,6 +18,11 @@ Configuration is done via environment variables:
  - `MQTT_PASSWORD` - password to your MQTT server
  - `MQTT_TOPIC` - topic to which messages should be sent
  - `MQTT_HOST` - address of your MQTT server
+ - `MQTT_TLS_ENABLED` - should we connect to MQTT via TLS (default `true`)
+ - `MQTT_TLS_CA_CERTS` optional path to CA certificate file
+ - `MQTT_TLS_CERT_FILE` optional client certificate
+ - `MQTT_TLS_KEY_FILE` - optional client key
+ - `MQTT_TLS_INSECURE` - skip certificate verification if `true` (default `false`)
  - `PASSWORD_HASH` - hashed password entered in [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US), can be generated with: `python -c 'import hashlib; print(hashlib.sha3_512(b"Nobody inspects the spammish repetition").hexdigest())'`
  - `USERNAME=q84fh` - username entered in [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US)
 
@@ -39,6 +44,7 @@ services:
       - MQTT_PASSWORD=secretpassword
       - MQTT_TOPIC=leafspy
       - MQTT_HOST=yourmqttbroker.local
+      - MQTT_TLS_ENABLED=false
       - PASSWORD_HASH=51b771f538117(...)
       - USERNAME=q84fh
     logging:
