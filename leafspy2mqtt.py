@@ -360,6 +360,7 @@ class InfluxWriter:
         self.buffer: list[str] = []
         self.dropped = 0
         self._recent: OrderedDict[str, None] = OrderedDict()
+        self._last_ts: dict[str, int] = {}
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
 
@@ -411,11 +412,19 @@ class InfluxWriter:
             self.dropped += overflow
             log.warning("InfluxDB buffer full, dropped %d oldest samples", overflow)
 
+    def _timestamp(self, payload: dict[str, Any]) -> int:
+        """Milliseconds, strictly increasing per VIN: InfluxDB would merge two different samples of
+        the same series with the same timestamp into one point."""
+        vin = str(payload.get("VIN") or "")
+        ts = max(time.time_ns() // 1_000_000, self._last_ts.get(vin, 0) + 1)
+        self._last_ts[vin] = ts
+        return ts
+
     def publish(self, payload: dict[str, Any]) -> None:
         if self._is_duplicate(payload):
             log.info("Duplicate sample (Seq=%s) not written to InfluxDB", payload.get("Seq"))
             return
-        line = line_protocol(self.cfg.influx_measurement, payload, time.time_ns() // 1_000_000)
+        line = line_protocol(self.cfg.influx_measurement, payload, self._timestamp(payload))
         if line is None:
             return
         self._enqueue([line])
@@ -428,6 +437,9 @@ class InfluxWriter:
             batch, self.buffer = self.buffer[:self.batch_size], self.buffer[self.batch_size:]
             try:
                 resp = await self.http.fetch(self.request("\n".join(batch)), raise_error=False)
+            except asyncio.CancelledError:
+                self._enqueue(batch, front=True)  # shutting down: keep it for the final flush
+                raise
             except Exception as exc:  # connection refused, DNS, TLS, timeout...
                 log.warning("InfluxDB unreachable (%s), %d samples buffered", exc, len(batch) + len(self.buffer))
                 self._enqueue(batch, front=True)
@@ -469,6 +481,11 @@ class InfluxWriter:
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
+            try:
+                await self._task  # lets an in-flight batch go back into the buffer
+            except asyncio.CancelledError:
+                pass
+            self._task = None
         if self.buffer:
             try:
                 await asyncio.wait_for(self.flush(), timeout=5)

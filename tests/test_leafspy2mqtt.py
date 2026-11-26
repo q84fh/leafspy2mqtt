@@ -245,6 +245,47 @@ def test_influx_connection_error_keeps_data(monkeypatch):
     assert asyncio.run(writer.flush()) is True and writer.buffer == []
 
 
+def test_influx_timestamps_unique_per_vin(monkeypatch):
+    writer = l2m.InfluxWriter(influx_cfg(monkeypatch), FakeHTTP())
+    monkeypatch.setattr(l2m.time, "time_ns", lambda: 1_000_000_000_000_000_000)  # frozen clock
+    for seq in range(3):
+        writer.publish(l2m.normalise(args({**SAMPLE, "Seq": str(seq)})))
+    writer.publish(l2m.normalise(args({**SAMPLE, "VIN": "OTHER", "Seq": "0"})))
+    stamps = [line.rsplit(" ", 1)[1] for line in writer.buffer]
+    assert stamps == ["1000000000000", "1000000000001", "1000000000002", "1000000000000"]
+
+
+class SlowHTTP(FakeHTTP):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def fetch(self, request, raise_error=True):
+        self.requests.append(request)
+        if len(self.requests) == 1:  # first write hangs until shutdown
+            self.started.set()
+            await self.release.wait()
+        return FakeResponse(204)
+
+
+def test_influx_stop_during_pending_write_keeps_batch(monkeypatch):
+    async def scenario():
+        http = SlowHTTP()
+        writer = l2m.InfluxWriter(influx_cfg(monkeypatch), http)
+        writer.start()
+        writer.publish(l2m.normalise(args(SAMPLE)))
+        await asyncio.wait_for(http.started.wait(), 1)
+        assert writer.buffer == []  # batch is in flight
+        await writer.stop()
+        return http, writer
+
+    http, writer = asyncio.run(scenario())
+    assert len(http.requests) == 2  # in-flight batch was re-sent by the final flush
+    assert http.requests[0].body == http.requests[1].body
+    assert writer.buffer == []
+
+
 def test_influx_bad_data_is_dropped(monkeypatch):
     writer = l2m.InfluxWriter(influx_cfg(monkeypatch), FakeHTTP(400))
     writer.publish(l2m.normalise(args(SAMPLE)))
