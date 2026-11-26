@@ -28,7 +28,8 @@ from dotenv import load_dotenv
 
 log = logging.getLogger("leafspy2mqtt")
 
-VERSION = "2.0.0"
+# Set at image build time from the git tag (see Dockerfile / CI); "dev" when run from source.
+VERSION = os.getenv("LEAFSPY2MQTT_VERSION") or "dev"
 
 # Query parameters that must never leave this process.
 SECRET_FIELDS = {"user", "pass"}

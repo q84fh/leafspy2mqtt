@@ -120,3 +120,16 @@ class HandlerTest(AsyncHTTPTestCase):
 
     def test_healthz(self):
         assert self.fetch("/healthz").body == b"ok"
+
+
+def test_version_from_environment(monkeypatch):
+    import importlib
+    monkeypatch.setenv("LEAFSPY2MQTT_VERSION", "9.9.9")
+    try:
+        assert importlib.reload(l2m).VERSION == "9.9.9"
+        cfg = make_cfg(monkeypatch)
+        conf = dict(l2m.discovery_messages(cfg, "VIN1"))["homeassistant/sensor/leafspy_vin1/soc/config"]
+        assert conf["device"]["sw_version"] == "leafspy2mqtt 9.9.9"
+    finally:
+        monkeypatch.delenv("LEAFSPY2MQTT_VERSION")
+        importlib.reload(l2m)
