@@ -8,6 +8,7 @@
 [![Github issues](https://img.shields.io/github/issues/q84fh/leafspy2mqtt)](https://github.com/q84fh/leafspy2mqtt/issues)
 [![Github last-commit](https://img.shields.io/github/last-commit/q84fh/leafspy2mqtt)](https://github.com/q84fh/leafspy2mqtt)
 [![Built with Devbox](https://www.jetify.com/img/devbox/shield_galaxy.svg)](https://www.jetify.com/devbox/docs/contributor-quickstart/)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/q84fh)
 
 This is simple server that bridges [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) to MQTT broker and/or [InfluxDB](#influxdb) (1.x, 2.x, 3.x). 
 
@@ -260,3 +261,6 @@ The InfluxDB output was inspired by [unforgiven512/leafspy2influxdb](https://git
 pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q
 ```
+
+## Support
+If leafspy2mqtt is useful to you, you can [buy me a coffee](https://buymeacoffee.com/q84fh) ☕.
