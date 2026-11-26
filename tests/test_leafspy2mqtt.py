@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -133,3 +134,138 @@ def test_version_from_environment(monkeypatch):
     finally:
         monkeypatch.delenv("LEAFSPY2MQTT_VERSION")
         importlib.reload(l2m)
+
+
+# --- InfluxDB ---------------------------------------------------------------------------------
+
+class FakeResponse:
+    def __init__(self, code, body=b""):
+        self.code, self.body, self.error = code, body, None
+
+
+class FakeHTTP:
+    def __init__(self, *codes):
+        self.codes = list(codes)
+        self.requests = []
+
+    async def fetch(self, request, raise_error=True):
+        self.requests.append(request)
+        code = self.codes.pop(0) if self.codes else 204
+        if isinstance(code, Exception):
+            raise code
+        return FakeResponse(code)
+
+
+def influx_cfg(monkeypatch, **env):
+    base = {"INFLUXDB_URL": "http://influx:8086/", "INFLUXDB_VERSION": "2", "INFLUXDB_TOKEN": "tok",
+            "INFLUXDB_ORG": "home", "INFLUXDB_BUCKET": "leaf"}
+    base.update(env)
+    return make_cfg(monkeypatch, **base)
+
+
+def test_line_protocol():
+    payload = l2m.normalise(args(SAMPLE))
+    line = l2m.line_protocol("leafspy", payload, 1764158400000)
+    series, fields, ts = line.split(" ")
+    assert series == "leafspy,vin=SJNFAAZE1U0000001"
+    assert ts == "1764158400000"
+    parsed = dict(f.split("=") for f in fields.split(","))
+    assert parsed["Gids"] == "219.0"       # ints written as floats: no field type conflicts
+    assert parsed["SOC"] == "46.2757"
+    assert "BatPower" in parsed
+    assert not {"VIN", "Tunits", "received_at", "user", "pass"} & parsed.keys()
+
+
+def test_line_protocol_escaping_and_empty():
+    line = l2m.line_protocol("leaf spy", {"VIN": "A B,C=D", "my key": 1, "Bad": float("nan")}, 1)
+    assert line == r"leaf\ spy,vin=A\ B\,C\=D my\ key=1.0 1"
+    assert l2m.line_protocol("leafspy", {"VIN": "X", "Tunits": "C"}, 1) is None
+
+
+@pytest.mark.parametrize("version, env, url, auth", [
+    ("1", {"INFLUXDB_DATABASE": "leafdb", "INFLUXDB_USERNAME": "u", "INFLUXDB_PASSWORD": "p",
+           "INFLUXDB_RETENTION_POLICY": "autogen"},
+     "http://influx:8086/write?db=leafdb&precision=ms&rp=autogen", None),
+    ("2", {}, "http://influx:8086/api/v2/write?org=home&bucket=leaf&precision=ms", "Token tok"),
+    ("3", {"INFLUXDB_DATABASE": "leafdb"},
+     "http://influx:8086/api/v3/write_lp?db=leafdb&precision=millisecond", "Bearer tok"),
+])
+def test_influx_request_per_version(monkeypatch, version, env, url, auth):
+    cfg = influx_cfg(monkeypatch, INFLUXDB_VERSION=version, **env)
+    cfg.validate()
+    req = l2m.InfluxWriter(cfg, FakeHTTP()).request("x")
+    assert req.url == url and req.method == "POST"
+    assert req.headers.get("Authorization") == auth
+    if version == "1":
+        assert (req.auth_username, req.auth_password) == ("u", "p")
+
+
+def test_influx_v3_database_falls_back_to_bucket(monkeypatch):
+    cfg = influx_cfg(monkeypatch, INFLUXDB_VERSION="3")
+    assert cfg.influx_database == "leaf"
+
+
+@pytest.mark.parametrize("env", [
+    {"INFLUXDB_VERSION": "4"},
+    {"INFLUXDB_VERSION": "2", "INFLUXDB_ORG": ""},
+    {"INFLUXDB_VERSION": "1", "INFLUXDB_BUCKET": ""},
+    {"INFLUXDB_URL": "", "MQTT_ENABLED": "false"},
+])
+def test_influx_config_validation(monkeypatch, env):
+    with pytest.raises(SystemExit):
+        influx_cfg(monkeypatch, **env).validate()
+
+
+def test_influx_dedup_and_flush(monkeypatch):
+    http = FakeHTTP()
+    writer = l2m.InfluxWriter(influx_cfg(monkeypatch), http)
+    payload = l2m.normalise(args(SAMPLE))
+    writer.publish(payload)
+    writer.publish({**payload, "received_at": "later"})  # LeafSpy resend: same values, same Seq
+    writer.publish({**payload, "Seq": 144})
+    assert len(writer.buffer) == 2
+    assert asyncio.run(writer.flush()) is True
+    assert writer.buffer == [] and len(http.requests) == 1
+    assert http.requests[0].body.decode().count("\n") == 1
+
+
+def test_influx_retries_keep_data(monkeypatch):
+    http = FakeHTTP(503, 204)
+    writer = l2m.InfluxWriter(influx_cfg(monkeypatch), http)
+    writer.publish(l2m.normalise(args(SAMPLE)))
+    assert asyncio.run(writer.flush()) is False and len(writer.buffer) == 1
+    assert asyncio.run(writer.flush()) is True and writer.buffer == []
+
+
+def test_influx_connection_error_keeps_data(monkeypatch):
+    http = FakeHTTP(ConnectionRefusedError(111, "Connection refused"), 204)
+    writer = l2m.InfluxWriter(influx_cfg(monkeypatch), http)
+    writer.publish(l2m.normalise(args(SAMPLE)))
+    assert asyncio.run(writer.flush()) is False and len(writer.buffer) == 1
+    assert asyncio.run(writer.flush()) is True and writer.buffer == []
+
+
+def test_influx_bad_data_is_dropped(monkeypatch):
+    writer = l2m.InfluxWriter(influx_cfg(monkeypatch), FakeHTTP(400))
+    writer.publish(l2m.normalise(args(SAMPLE)))
+    assert asyncio.run(writer.flush()) is True
+    assert writer.buffer == [] and writer.dropped == 1
+
+
+def test_influx_buffer_is_bounded(monkeypatch):
+    writer = l2m.InfluxWriter(influx_cfg(monkeypatch), FakeHTTP())
+    writer.max_buffer = 3
+    for seq in range(5):
+        writer.publish(l2m.normalise(args({**SAMPLE, "Seq": str(seq)})))
+    assert len(writer.buffer) == 3 and writer.dropped == 2
+    assert "Seq=2.0" in writer.buffer[0]
+
+
+def test_fan_out_isolates_failures():
+    got = []
+
+    def broken(payload):
+        raise RuntimeError("boom")
+
+    l2m.fan_out([broken, got.append])({"SOC": 1})
+    assert got == [{"SOC": 1}]

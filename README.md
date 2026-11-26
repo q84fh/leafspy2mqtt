@@ -9,7 +9,7 @@
 [![Github last-commit](https://img.shields.io/github/last-commit/q84fh/leafspy2mqtt)](https://github.com/q84fh/leafspy2mqtt)
 [![Built with Devbox](https://www.jetify.com/img/devbox/shield_galaxy.svg)](https://www.jetify.com/devbox/docs/contributor-quickstart/)
 
-This is simple server that bridges [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) to MQTT broker. 
+This is simple server that bridges [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) to MQTT broker and/or [InfluxDB](#influxdb) (1.x, 2.x, 3.x). 
 
 ## Environment variables
 Configuration is done via environment variables (or a `.env` file):
@@ -18,6 +18,7 @@ Configuration is done via environment variables (or a `.env` file):
 | --- | --- | --- |
 | `USERNAME` | – (required) | username entered in LeafSpy (`ID` field) |
 | `PASSWORD_HASH` | – (required) | SHA3-512 of the password entered in LeafSpy (`PW` field), see below |
+| `MQTT_ENABLED` | `true` | set to `false` to only write to InfluxDB |
 | `MQTT_HOST` | `localhost` | MQTT broker address |
 | `MQTT_PORT` | `8883` with TLS, `1883` without | MQTT broker port |
 | `MQTT_USERNAME` / `MQTT_PASSWORD` | – | MQTT credentials |
@@ -33,6 +34,7 @@ Configuration is done via environment variables (or a `.env` file):
 | `HA_ENTITY_PREFIX` | `leafspy` | entity ids become `sensor.leafspy_soc`, `device_tracker.leafspy`, … |
 | `LISTEN_PORT` | `8888` | HTTP port |
 | `LOG_LEVEL` | `INFO` | Python log level |
+| `INFLUXDB_*` | – | optional InfluxDB output, see [InfluxDB](#influxdb) |
 
 Generate the password hash with:
 ```
@@ -184,6 +186,74 @@ contains `user` and `pass`, temperatures are always °C, and `BatPower` and `rec
 
 `PlugState`: 0 = not plugged, 1 = partially plugged, 2 = plugged. `ChrgMode`: 0 = not charging, 1 = L1, 2 = L2,
 3 = L3/CHAdeMO.
+
+## InfluxDB
+Set `INFLUXDB_URL` to also write every sample to InfluxDB (in parallel with MQTT, or alone with
+`MQTT_ENABLED=false`). InfluxDB 1.x, 2.x and 3.x are supported; no extra Python packages are needed.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `INFLUXDB_URL` | – (disabled) | e.g. `http://influxdb:8086` (1.x/2.x) or `http://influxdb3:8181` (3.x) |
+| `INFLUXDB_VERSION` | `2` | `1`, `2` or `3` |
+| `INFLUXDB_TOKEN` | – | API token (2.x: required, 3.x: unless started with `--without-auth`, 1.x: for the v1 compatibility API of 2.x/3.x) |
+| `INFLUXDB_ORG` / `INFLUXDB_BUCKET` | – | organisation and bucket (2.x) |
+| `INFLUXDB_DATABASE` | `INFLUXDB_BUCKET` | database (1.x, 3.x) |
+| `INFLUXDB_USERNAME` / `INFLUXDB_PASSWORD` | – | basic auth (1.x) |
+| `INFLUXDB_RETENTION_POLICY` | – | retention policy (1.x) |
+| `INFLUXDB_MEASUREMENT` | `leafspy` | measurement (table) name |
+| `INFLUXDB_TLS_CA_CERTS` | system CA bundle | optional CA file for `https://` URLs |
+| `INFLUXDB_TLS_INSECURE` | `false` | skip certificate verification if `true` |
+
+Data layout: measurement `leafspy`, tag `vin`, one field per numeric value of the [JSON message](#data-format)
+(`SOC`, `Gids`, `BatPower`, `Lat`, `Long`, …; temperatures in °C), timestamp = time of reception (ms).
+All fields are written as floats, because LeafSpy sends e.g. `ChrgPwr=1300` and `ChrgPwr=1300.5` and InfluxDB
+rejects a field whose type changes.
+
+Writes happen in the background and never delay or fail the answer to LeafSpy. While InfluxDB is unreachable
+samples are buffered in memory (up to 20000, with their original timestamps) and retried with backoff.
+A sample that LeafSpy sends again (same values, same `Seq`) is written only once.
+
+Example with InfluxDB 2 next to the bridge:
+
+```yaml
+services:
+  leafspy2mqtt:
+    image: ghcr.io/q84fh/leafspy2mqtt:2
+    ports:
+      - 8888:8888
+    restart: unless-stopped
+    environment:
+      - USERNAME=q84fh
+      - PASSWORD_HASH=51b771f538117(...)
+      - MQTT_HOST=yourmqttbroker.local   # or MQTT_ENABLED=false
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_VERSION=2
+      - INFLUXDB_ORG=home
+      - INFLUXDB_BUCKET=leafspy
+      - INFLUXDB_TOKEN=change-me-long-random-token
+  influxdb:
+    image: influxdb:2.7
+    restart: unless-stopped
+    ports:
+      - 8086:8086
+    volumes:
+      - influxdb:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=change-me-too
+      - DOCKER_INFLUXDB_INIT_ORG=home
+      - DOCKER_INFLUXDB_INIT_BUCKET=leafspy
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=change-me-long-random-token
+volumes:
+  influxdb:
+```
+
+For InfluxDB 1.x use `INFLUXDB_VERSION=1` and `INFLUXDB_DATABASE` (plus `INFLUXDB_USERNAME`/`INFLUXDB_PASSWORD` if
+auth is enabled); for InfluxDB 3 Core/Enterprise use `INFLUXDB_VERSION=3`, `INFLUXDB_DATABASE` and a token from
+`influxdb3 create token --admin`.
+
+The InfluxDB output was inspired by [unforgiven512/leafspy2influxdb](https://github.com/unforgiven512/leafspy2influxdb).
 
 ## Development
 ```

@@ -7,6 +7,9 @@ We authenticate it, normalise the values, drop the credentials and publish:
 * the whole sample as JSON to ``MQTT_TOPIC`` (retained, backwards compatible),
 * Home Assistant MQTT discovery configs (one device per VIN),
 * an availability topic (LWT) so HA marks entities unavailable when we die.
+
+Optionally (``INFLUXDB_URL``) every sample is also written to InfluxDB 1.x, 2.x or 3.x
+as line protocol; MQTT can be switched off with ``MQTT_ENABLED=false``.
 """
 
 from __future__ import annotations
@@ -16,13 +19,18 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import signal
 import ssl
+import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Callable
+from urllib.parse import urlencode
 
 import paho.mqtt.client as mqtt
+import tornado.httpclient
 import tornado.web
 from dotenv import load_dotenv
 
@@ -99,6 +107,7 @@ def env_bool(name: str, default: bool) -> bool:
 
 class Config:
     def __init__(self) -> None:
+        self.mqtt_enabled = env_bool("MQTT_ENABLED", True)
         self.mqtt_host = os.getenv("MQTT_HOST", "localhost")
         self.mqtt_username = os.getenv("MQTT_USERNAME") or None
         self.mqtt_password = os.getenv("MQTT_PASSWORD") or None
@@ -118,6 +127,20 @@ class Config:
         self.device_name = os.getenv("HA_DEVICE_NAME", "Nissan Leaf")
         self.entity_prefix = os.getenv("HA_ENTITY_PREFIX", "leafspy")
 
+        # InfluxDB (optional, enabled by INFLUXDB_URL).
+        self.influx_url = (os.getenv("INFLUXDB_URL") or "").rstrip("/") or None
+        self.influx_version = (os.getenv("INFLUXDB_VERSION") or "2").strip()
+        self.influx_token = os.getenv("INFLUXDB_TOKEN") or None
+        self.influx_org = os.getenv("INFLUXDB_ORG") or None                 # v2
+        self.influx_bucket = os.getenv("INFLUXDB_BUCKET") or None           # v2
+        self.influx_database = os.getenv("INFLUXDB_DATABASE") or self.influx_bucket  # v1 / v3
+        self.influx_retention_policy = os.getenv("INFLUXDB_RETENTION_POLICY") or None  # v1
+        self.influx_username = os.getenv("INFLUXDB_USERNAME") or None       # v1
+        self.influx_password = os.getenv("INFLUXDB_PASSWORD") or None       # v1
+        self.influx_measurement = os.getenv("INFLUXDB_MEASUREMENT") or "leafspy"
+        self.influx_tls_ca_certs = os.getenv("INFLUXDB_TLS_CA_CERTS") or None
+        self.influx_tls_insecure = env_bool("INFLUXDB_TLS_INSECURE", False)
+
     @property
     def availability_topic(self) -> str:
         return f"{self.topic}/status"
@@ -125,6 +148,15 @@ class Config:
     def validate(self) -> None:
         if not self.username or not self.password_hash:
             raise SystemExit("USERNAME and PASSWORD_HASH must be set")
+        if not self.mqtt_enabled and not self.influx_url:
+            raise SystemExit("Nothing to do: MQTT_ENABLED=false and INFLUXDB_URL not set")
+        if self.influx_url:
+            if self.influx_version not in {"1", "2", "3"}:
+                raise SystemExit("INFLUXDB_VERSION must be 1, 2 or 3")
+            if self.influx_version == "2" and not (self.influx_org and self.influx_bucket and self.influx_token):
+                raise SystemExit("InfluxDB 2.x needs INFLUXDB_TOKEN, INFLUXDB_ORG and INFLUXDB_BUCKET")
+            if self.influx_version in {"1", "3"} and not self.influx_database:
+                raise SystemExit(f"InfluxDB {self.influx_version}.x needs INFLUXDB_DATABASE")
 
 
 def to_number(value: str) -> Any:
@@ -278,6 +310,183 @@ class Publisher:
             log.warning("MQTT publish queued/failed rc=%s (broker down?)", info.rc)
 
 
+# Not numeric measurements: VIN becomes a tag, the rest is dropped.
+INFLUX_SKIP_FIELDS = {"VIN", "Tunits", "received_at"}
+
+
+def _lp_escape(value: str, specials: str) -> str:
+    value = value.replace("\\", "\\\\")
+    for ch in specials:
+        value = value.replace(ch, "\\" + ch)
+    return value.replace("\n", "\\n")
+
+
+def line_protocol(measurement: str, payload: dict[str, Any], timestamp_ms: int) -> str | None:
+    """One InfluxDB line for a normalised sample, or None if it has no numeric field.
+
+    Every number is written as a float: LeafSpy sends e.g. ``ChrgPwr=1300`` and ``Speed=0.0``
+    for the same field, and a field whose type changes would be rejected by InfluxDB.
+    """
+    fields = []
+    for key, value in sorted(payload.items()):
+        if key in INFLUX_SKIP_FIELDS or isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if not math.isfinite(value):
+            continue
+        fields.append(f"{_lp_escape(key, ',= ')}={float(value)!r}")
+    if not fields:
+        return None
+    series = _lp_escape(measurement, ", ")
+    vin = payload.get("VIN")
+    if vin not in (None, ""):
+        series += f",vin={_lp_escape(str(vin), ',= ')}"
+    return f"{series} {','.join(fields)} {timestamp_ms}"
+
+
+class InfluxWriter:
+    """Buffers samples and writes them to InfluxDB in the background.
+
+    Writes never block or fail the LeafSpy request. If InfluxDB is unreachable the lines are
+    kept (up to ``max_buffer``, oldest dropped first) and retried with exponential backoff.
+    """
+
+    batch_size = 1000
+    max_buffer = 20000
+    dedup_size = 512
+
+    def __init__(self, cfg: Config, http_client: tornado.httpclient.AsyncHTTPClient | None = None) -> None:
+        self.cfg = cfg
+        self.http = http_client or tornado.httpclient.AsyncHTTPClient()
+        self.buffer: list[str] = []
+        self.dropped = 0
+        self._recent: OrderedDict[str, None] = OrderedDict()
+        self._wake = asyncio.Event()
+        self._task: asyncio.Task | None = None
+
+    # -- request -----------------------------------------------------------------------------
+    def request(self, body: str) -> tornado.httpclient.HTTPRequest:
+        cfg = self.cfg
+        headers = {"Content-Type": "text/plain; charset=utf-8"}
+        auth: dict[str, Any] = {}
+        if cfg.influx_version == "1":
+            params = {"db": cfg.influx_database, "precision": "ms"}
+            if cfg.influx_retention_policy:
+                params["rp"] = cfg.influx_retention_policy
+            path = "/write"
+            if cfg.influx_username:
+                auth = {"auth_username": cfg.influx_username, "auth_password": cfg.influx_password or ""}
+            elif cfg.influx_token:  # v1 compatibility API of InfluxDB 2.x / 3.x
+                headers["Authorization"] = f"Token {cfg.influx_token}"
+        elif cfg.influx_version == "2":
+            params = {"org": cfg.influx_org, "bucket": cfg.influx_bucket, "precision": "ms"}
+            path = "/api/v2/write"
+            headers["Authorization"] = f"Token {cfg.influx_token}"
+        else:
+            params = {"db": cfg.influx_database, "precision": "millisecond"}
+            path = "/api/v3/write_lp"
+            if cfg.influx_token:
+                headers["Authorization"] = f"Bearer {cfg.influx_token}"
+        return tornado.httpclient.HTTPRequest(
+            f"{cfg.influx_url}{path}?{urlencode(params)}", method="POST", body=body, headers=headers,
+            request_timeout=10, connect_timeout=5,
+            validate_cert=not cfg.influx_tls_insecure, ca_certs=cfg.influx_tls_ca_certs, **auth)
+
+    # -- buffering ---------------------------------------------------------------------------
+    def _is_duplicate(self, payload: dict[str, Any]) -> bool:
+        """LeafSpy re-sends a sample when it did not get our answer in time. Same values
+        (including Seq) seen recently -> skip, otherwise it would be stored twice."""
+        key = json.dumps({k: v for k, v in payload.items() if k != "received_at"}, sort_keys=True)
+        if key in self._recent:
+            return True
+        self._recent[key] = None
+        if len(self._recent) > self.dedup_size:
+            self._recent.popitem(last=False)
+        return False
+
+    def _enqueue(self, lines: list[str], front: bool = False) -> None:
+        self.buffer = lines + self.buffer if front else self.buffer + lines
+        overflow = len(self.buffer) - self.max_buffer
+        if overflow > 0:
+            del self.buffer[:overflow]
+            self.dropped += overflow
+            log.warning("InfluxDB buffer full, dropped %d oldest samples", overflow)
+
+    def publish(self, payload: dict[str, Any]) -> None:
+        if self._is_duplicate(payload):
+            log.info("Duplicate sample (Seq=%s) not written to InfluxDB", payload.get("Seq"))
+            return
+        line = line_protocol(self.cfg.influx_measurement, payload, time.time_ns() // 1_000_000)
+        if line is None:
+            return
+        self._enqueue([line])
+        self._wake.set()
+
+    # -- writing -----------------------------------------------------------------------------
+    async def flush(self) -> bool:
+        """Send everything buffered. Returns False if InfluxDB should be retried later."""
+        while self.buffer:
+            batch, self.buffer = self.buffer[:self.batch_size], self.buffer[self.batch_size:]
+            try:
+                resp = await self.http.fetch(self.request("\n".join(batch)), raise_error=False)
+            except Exception as exc:  # connection refused, DNS, TLS, timeout...
+                log.warning("InfluxDB unreachable (%s), %d samples buffered", exc, len(batch) + len(self.buffer))
+                self._enqueue(batch, front=True)
+                return False
+            if 200 <= resp.code < 300:
+                continue
+            body = (resp.body or b"")[:300].decode("utf-8", errors="replace")
+            if resp.code in (400, 413, 422):
+                # Bad data will never succeed; do not block everything behind it.
+                log.error("InfluxDB rejected %d lines (HTTP %d): %s", len(batch), resp.code, body)
+                self.dropped += len(batch)
+                continue
+            log.warning("InfluxDB write failed (HTTP %s): %s", resp.code, body or resp.error)
+            self._enqueue(batch, front=True)
+            return False
+        return True
+
+    async def _run(self) -> None:
+        backoff = 1.0
+        while True:
+            await self._wake.wait()
+            self._wake.clear()
+            try:
+                ok = await self.flush()
+            except Exception:  # never let the writer task die
+                log.exception("InfluxDB writer error")
+                ok = False
+            if ok:
+                backoff = 1.0
+            else:
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60.0)
+                self._wake.set()
+
+    def start(self) -> None:
+        log.info("Writing to InfluxDB %s.x at %s", self.cfg.influx_version, self.cfg.influx_url)
+        self._task = asyncio.get_running_loop().create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+        if self.buffer:
+            try:
+                await asyncio.wait_for(self.flush(), timeout=5)
+            except Exception:
+                log.warning("Could not flush %d samples to InfluxDB on shutdown", len(self.buffer))
+
+
+def fan_out(sinks: list[Callable[[dict[str, Any]], None]]) -> Callable[[dict[str, Any]], None]:
+    """One publish callable for several outputs; a failing output does not affect the others."""
+    def publish(payload: dict[str, Any]) -> None:
+        for sink in sinks:
+            try:
+                sink(payload)
+            except Exception:
+                log.exception("Publishing to %s failed", getattr(sink, "__qualname__", sink))
+    return publish
+
+
 class MainHandler(tornado.web.RequestHandler):
     def initialize(self, cfg: Config, publish: Callable[[dict[str, Any]], None]) -> None:
         self.cfg = cfg
@@ -337,9 +546,17 @@ async def main() -> None:
     cfg = Config()
     cfg.validate()
 
-    publisher = Publisher(cfg)
-    publisher.start()
-    app = make_app(cfg, publisher.publish)
+    sinks: list[Callable[[dict[str, Any]], None]] = []
+    publisher = influx = None
+    if cfg.mqtt_enabled:
+        publisher = Publisher(cfg)
+        publisher.start()
+        sinks.append(publisher.publish)
+    if cfg.influx_url:
+        influx = InfluxWriter(cfg)
+        influx.start()
+        sinks.append(influx.publish)
+    app = make_app(cfg, fan_out(sinks))
     server = app.listen(cfg.listen_port)
     log.info("leafspy2mqtt %s listening on :%d", VERSION, cfg.listen_port)
 
@@ -350,7 +567,10 @@ async def main() -> None:
     await stop.wait()
 
     server.stop()
-    publisher.stop()
+    if influx:
+        await influx.stop()
+    if publisher:
+        publisher.stop()
 
 
 if __name__ == "__main__":
