@@ -12,46 +12,63 @@
 This is simple server that bridges [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) to MQTT broker. 
 
 ## Environment variables
-Configuration is done via environment variables:
- - `MQTT_PORT` - port of your MQTT server
- - `MQTT_USERNAME` - username in your MQTT server
- - `MQTT_PASSWORD` - password to your MQTT server
- - `MQTT_TOPIC` - topic to which messages should be sent
- - `MQTT_HOST` - address of your MQTT server
- - `MQTT_TLS_ENABLED` - should we connect to MQTT via TLS (default `true`)
- - `MQTT_TLS_CA_CERTS` optional path to CA certificate file
- - `MQTT_TLS_CERT_FILE` optional client certificate
- - `MQTT_TLS_KEY_FILE` - optional client key
- - `MQTT_TLS_INSECURE` - skip certificate verification if `true` (default `false`)
- - `PASSWORD_HASH` - hashed password entered in [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US), can be generated with: `python -c 'import hashlib; print(hashlib.sha3_512(b"Nobody inspects the spammish repetition").hexdigest())'`
- - `USERNAME=q84fh` - username entered in [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US)
+Configuration is done via environment variables (or a `.env` file):
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `USERNAME` | – (required) | username entered in LeafSpy (`ID` field) |
+| `PASSWORD_HASH` | – (required) | SHA3-512 of the password entered in LeafSpy (`PW` field), see below |
+| `MQTT_HOST` | `localhost` | MQTT broker address |
+| `MQTT_PORT` | `8883` with TLS, `1883` without | MQTT broker port |
+| `MQTT_USERNAME` / `MQTT_PASSWORD` | – | MQTT credentials |
+| `MQTT_TLS_ENABLED` | `true` | connect to the broker over TLS |
+| `MQTT_TLS_CA_CERTS` | system CA bundle | optional path to CA certificate file |
+| `MQTT_TLS_CERT_FILE` / `MQTT_TLS_KEY_FILE` | – | optional client certificate and key |
+| `MQTT_TLS_INSECURE` | `false` | skip certificate verification if `true` |
+| `MQTT_CLIENT_ID` | `leafspy2mqtt` | MQTT client id |
+| `MQTT_TOPIC` | `leafspy` | state topic; availability is published to `<MQTT_TOPIC>/status` |
+| `HA_DISCOVERY` | `true` | publish [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) |
+| `HA_DISCOVERY_PREFIX` | `homeassistant` | discovery prefix |
+| `HA_DEVICE_NAME` | `Nissan Leaf` | device name in Home Assistant |
+| `HA_ENTITY_PREFIX` | `leafspy` | entity ids become `sensor.leafspy_soc`, `device_tracker.leafspy`, … |
+| `LISTEN_PORT` | `8888` | HTTP port |
+| `LOG_LEVEL` | `INFO` | Python log level |
+
+Generate the password hash with:
+```
+python -c 'import hashlib; print(hashlib.sha3_512(b"Nobody inspects the spammish repetition").hexdigest())'
+```
+
+`GET /healthz` returns `ok` (for liveness/readiness probes).
 
  ## Example docker-compose
 
  You need MQTT broker. You can install one yourself or for [deploy one built into Home Assistant](https://www.home-assistant.io/integrations/mqtt).
 
  ```yaml
-version: '3'
 services:
-  2mqtt:
-    image: q84fh/leafspy2mqtt:latest
+  leafspy2mqtt:
+    image: ghcr.io/q84fh/leafspy2mqtt:2
     ports:
       -  8888:8888
     restart: unless-stopped
     environment:
+      - MQTT_HOST=yourmqttbroker.local
       - MQTT_PORT=1883
+      - MQTT_TLS_ENABLED=false
       - MQTT_USERNAME=leaf
       - MQTT_PASSWORD=secretpassword
       - MQTT_TOPIC=leafspy
-      - MQTT_HOST=yourmqttbroker.local
-      - MQTT_TLS_ENABLED=false
       - PASSWORD_HASH=51b771f538117(...)
       - USERNAME=q84fh
-    logging:
-      options:
-        max-size: "100M"
-        max-file: "5"
  ```
+
+Images are multi-arch (`linux/amd64`, `linux/arm64`, e.g. Raspberry Pi 4) and run as an unprivileged user.
+
+## Security notes
+ - LeafSpy sends the password in the URL query string. Expose the endpoint **only over HTTPS** (reverse proxy / tunnel) or over a VPN.
+ - The query string is never logged and `user`/`pass` are removed before anything is published to MQTT.
+ - Consider rate limiting on the reverse proxy; the endpoint is meant for one car.
 
 ## LeafSpy configuration
 You need to expose port 8888 so [LeafSpy](https://play.google.com/store/apps/details?id=com.Turbo3.Leaf_Spy_Pro&hl=en-US) would be able to reach it. You can do it via VPN to your mobile, or by just exposing it to the public Internet.
@@ -115,12 +132,10 @@ GET /?user=q84fh&pass=Nobodyinspectsthespammishrepetition&DevBat=100&Gids=219&La
 | BatVolts 	| float | V       | 352.55                              | Voltage of battery                                           |
 | BatAmps 	| float | A       | -1.189                              | Current flowing into (negative) or out of battery (positive) |
 
-This is converted to JSON payload and sent towards MQTT broker. Message looks like this:
+This is converted to JSON payload and sent towards MQTT broker (credentials removed). Message looks like this:
 
 ```json
 {
-  "user": "q84fh",
-  "pass": "Nobodyinspectsthespammishrepetition",
   "DevBat": 100,
   "Gids": 219,
   "Lat": -11.12421,
@@ -145,83 +160,33 @@ This is converted to JSON payload and sent towards MQTT broker. Message looks li
   "Hx": 102.51,
   "Speed": 0.0,
   "BatVolts": 352.55,
-  "BatAmps": -1.189
+  "BatAmps": -1.189,
+  "BatPower": -419.4,
+  "received_at": "2026-11-26T12:00:00+00:00"
 }
 ```
 
 ## How to use it
-You can use it for example to feed this data to your [Home Assistant](https://www.home-assistant.io/) with its [MQTT integration](https://www.home-assistant.io/integrations/mqtt) and do some cool automation or just data visualisation with it. If you fill find some cool application let me know, I would love to include some examples here.
+With `HA_DISCOVERY=true` (default) Home Assistant creates a **Nissan Leaf** device automatically as soon as
+the first sample arrives (one device per VIN). No YAML needed. You get:
 
-Example configuration:
-```yaml
-mqtt:
-  sensor:
-    - name: leafspy_Gids
-      state_topic: "leafspy"
-      value_template: "{{ value_json.Gids }}"
-      
-    - name: leafspy_ODO
-      state_topic: "leafspy"
-      device_class: distance
-      unit_of_measurement: km
-      state_class: "total_increasing"
-      value_template: "{{ value_json.Odo }}"
+ - sensors: SOC, GIDs, battery capacity (Ah), SOH, Hx, battery/ambient temperature, battery voltage, current and
+   power (`BatPower`, W, positive = discharging), charging power, speed, motor RPM, odometer, trip, elevation,
+   phone battery, plug state, charge mode, last update;
+ - binary sensors: plugged in, charging, power switch;
+ - `device_tracker.leafspy` from the phone GPS.
 
-    - name: leafspy_SOC
-      state_topic: "leafspy"
-      unit_of_measurement: "%"
-      device_class: battery      
-      value_template: "{{ value_json.SOC }}"
-      
-    - name: leafspy_AHr
-      state_topic: "leafspy"
-      unit_of_measurement: AHr
-      device_class: battery
-      value_template: "{{ value_json.AHr }}"
-      
-    - name: leafspy_BatTemp
-      state_topic: "leafspy"
-      unit_of_measurement: °C
-      device_class: temperature
-      value_template: "{{ value_json.BatTemp }}"
-      
-    - name: leafspy_Amb
-      state_topic: "leafspy"
-      unit_of_measurement: °C
-      device_class: temperature
-      value_template: "{{ value_json.Amb }}"
-      
-    - name: leafspy_RPM
-      state_topic: "leafspy"
-      unit_of_measurement: RPM
-      value_template: "{{ value_json.RPM }}"
- 
-    - name: leafspy_SOH
-      state_topic: "leafspy"
-      unit_of_measurement: "%"
-      value_template: "{{ value_json.SOH }}"
-     
-    - name: leafspy_BatVolts
-      state_topic: "leafspy"
-      unit_of_measurement: V
-      device_class: voltage
-      value_template: "{{ value_json.BatVolts }}"
-      
-    - name: leafspy_AvgCellVolts
-      state_topic: "leafspy"
-      unit_of_measurement: V
-      device_class: voltage
-      value_template: "{{ value_json.BatVolts | float / 96 }}"
-      
-    - name: leafspy_BatAmps
-      state_topic: "leafspy"
-      unit_of_measurement: A
-      device_class: current
-      value_template: "{{ value_json.BatAmps }}"
+The device goes `unavailable` when the bridge stops (MQTT last will on `<MQTT_TOPIC>/status`). Discovery is
+re-sent when Home Assistant restarts (`homeassistant/status` = `online`).
 
-    - name: leafspy_Speed
-      state_topic: "leafspy"
-      unit_of_measurement: km/h
-      device_class: speed
-      value_template: "{{ value_json.Speed | float * 3.6 | round(0) }}"
+The JSON state message on `MQTT_TOPIC` is kept (retained) for other consumers. Compared with v1 it no longer
+contains `user` and `pass`, temperatures are always °C, and `BatPower` and `received_at` (ISO 8601 UTC) are added.
+
+`PlugState`: 0 = not plugged, 1 = partially plugged, 2 = plugged. `ChrgMode`: 0 = not charging, 1 = L1, 2 = L2,
+3 = L3/CHAdeMO.
+
+## Development
+```
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q
 ```

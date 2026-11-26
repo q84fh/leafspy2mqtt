@@ -1,0 +1,7 @@
+.git
+.github
+.devbox
+tests
+__pycache__
+*.pyc
+.env
